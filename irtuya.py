@@ -192,15 +192,17 @@ if decode_button:
         try:
             decoded_signal = decode_ir(ir_code_input)
             st.success("IR code decoded successfully!")
-            st.write("IR Signal (durations in µs):")
-            st.code(decoded_signal)
+            st.write("IR Raw Signal (durations in µs):")
+            signal_string = ", ".join(map(str, decoded_signal))
+            st.code(signal_string)
+            st.markdown("[Analyze or convert this signal in Sensus IR & RF Code Converter](https://pasthev.github.io/sensus/)") # Lien ajouté ici
         except Exception as e:
             st.error(f"Error during IR code decoding: {e}")
     else:
         st.warning("Please enter an IR code to decode.")
 
 st.header("IR Signal Encoding")
-ir_signal_input_str = st.text_area("Enter IR signal (list of µs durations separated by commas):", "")
+ir_signal_input_str = st.text_area("Enter IR Raw signal (list of µs durations separated by commas):", "")
 
 encode_button = st.button("Encode IR Signal")
 
