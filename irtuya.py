@@ -181,8 +181,6 @@ st.title("Tuya IR Converter")
 st.header("IR Code Decoding")
 
 
-st.markdown("This is just a quick test app based on [mildsunrise research](https://gist.github.com/mildsunrise/1d576669b63a260d2cff35fda63ec0b5)")
-
 ir_code_input = st.text_area("Enter Tuya IR code here:", "")
 
 decode_button = st.button("Decode IR Code")
@@ -195,7 +193,8 @@ if decode_button:
             st.write("IR Raw Signal (durations in µs):")
             signal_string = ", ".join(map(str, decoded_signal))
             st.code(signal_string)
-            st.markdown("[Analyze or convert this signal in Sensus IR & RF Code Converter](https://pasthev.github.io/sensus/)") # Lien ajouté ici
+            Help_sensus="Copy the above string, then click the link to open Sensus and paste it the 'Raw' field. In 'raw Analysis' panel, you can then click 'read raw' to get detailed analysis"
+            st.markdown("[Analyze or convert this signal in Sensus IR & RF Code Converter](https://pasthev.github.io/sensus/)", help=Help_sensus)
         except Exception as e:
             st.error(f"Error during IR code decoding: {e}")
     else:
@@ -221,3 +220,14 @@ if encode_button:
 
     else:
         st.warning("Please enter an IR signal to encode.")
+
+st.markdown("---")
+
+credits1="[mildsunrise research](https://gist.github.com/mildsunrise/1d576669b63a260d2cff35fda63ec0b5)"
+credits2="[pasthev 2025](https://pasthev.github.io/)"
+col_c1, col_c2 = st.columns([3, 1])	#  
+with col_c1:
+    st.markdown(f"*This tool is based on {credits1}*")
+with col_c2:
+    st.markdown(f"**{credits2}**")
+
