@@ -1,5 +1,6 @@
 import streamlit as st
 import io
+import re
 import base64
 import pandas as pd
 from bisect import bisect
@@ -8,6 +9,24 @@ from struct import pack, unpack
 
 Help_sensus="Copy the above Raw string, then click the link to open Sensus and paste it the 'Raw' field. In 'raw Analysis' panel, you can then click 'read raw' to get detailed analysis"
 sensus="[Analyze or convert this signal in Sensus IR & RF Code Converter](https://pasthev.github.io/sensus/)"
+example_nec_codes = {
+    "Examples": [
+        "",
+        "20, DF, 10, EF",
+        "[00, F7, 40, BF]",
+        "1f00 d2b4",
+        "00EF03",
+        "32, 223, 16, 239",
+        "[32, 223, 16, 239]",
+        "0204",
+        "1112",
+        "00100000 11011111 00010000 11101111",
+        "100000, 11011111, 10000, 11101111",
+        "00100000110111110001000011101111"
+    ]
+}
+
+
 # MAIN API
 
 def decode_ir(code: str) -> list[int]:
@@ -266,9 +285,113 @@ def translated_values(decoded_signal: list[int]) -> pd.DataFrame:
 
     return pd.DataFrame(data, columns=["Time", "Signal"])
 
+def parse_user_input(code_string: str) -> list[int]:
+    """
+    Interprets a user-input string as a NEC/NEC Extended code and returns a list of bytes.
+    Supports hex, binary, and decimal formats with various separators.
+    Prioritizes binary interpretation if the input consists only of 0s and 1s.
+    """
+    code_string = code_string.strip().lower()
+    code_string = code_string.strip('[](){}\'"`') # remove brackets, quotes, parentheses
+
+    if not code_string:
+        return []
+
+    # Check for purely binary input first (only 0 and 1)
+    separators = [',', ';', ' ', '\t'] # common separators
+
+    # Try parsing as separated binary values first (handling missing leading zeros)
+    for sep in separators:
+        if sep in code_string:
+            values = [s.strip() for s in code_string.split(sep) if s.strip()]
+            try:
+                binary_bytes_separated = []
+                for bin_val in values:
+                    if not all(c in '01' for c in bin_val):
+                        raise ValueError # Not purely binary values after split
+                    # Pad with leading zeros to 8 bits if necessary
+                    bin_val_padded = bin_val.zfill(8)
+                    if len(bin_val_padded) > 8:
+                        raise ValueError("Invalid binary value exceeds byte range") # binary string too long for a byte
+                    byte_val = int(bin_val_padded, 2)
+                    if 0 <= byte_val <= 255:
+                        binary_bytes_separated.append(byte_val)
+                    else:
+                        raise ValueError("Invalid binary value exceeds byte range") # binary value out of byte range
+                return binary_bytes_separated
+            except ValueError:
+                pass # Not valid separated binary, or conversion failed
+#
+    # Try parsing as continuous binary (after separated binary attempts)
+    binary_continuous = ''.join(code_string.split())
+    if all(c in '01' for c in binary_continuous):
+        if len(binary_continuous) % 8 == 0:
+            binary_bytes_continuous = []
+            for i in range(0, len(binary_continuous), 8):
+                byte_val = int(binary_continuous[i:i+8], 2)
+                binary_bytes_continuous.append(byte_val)
+            return binary_bytes_continuous
+        else:
+            return None # Invalid binary string length for continuous binary
+#
+    # Check for hex-like characters and even length for continuous hex AFTER binary check
+    is_hex_like = all(c in '0123456789abcdef' for c in ''.join(code_string.split()))
+    if is_hex_like and len(''.join(code_string.split())) % 2 == 0 and code_string[0] == '0' and len(code_string) <=4 : # case "0204"
+        data_bytes = bytes.fromhex(code_string)
+        return list(data_bytes)
+    elif is_hex_like and len(''.join(code_string.split())) % 2 == 0 and len(code_string) <=4 : # case "1112"
+        data_bytes = bytes.fromhex(code_string)
+        return list(data_bytes)
+
+    if is_hex_like and len(''.join(code_string.split())) % 2 == 0: # consider as continuous hex if possible
+        try:
+            data_bytes = bytes.fromhex(''.join(code_string.split()))
+            return list(data_bytes)
+        except ValueError:
+            pass # not valid hex, try other formats
+#
+    separators = [',', ';', ' ', '\t'] # common separators
+    for sep in separators:
+        if sep in code_string:
+            values = [s.strip() for s in code_string.split(sep) if s.strip()]
+            try:
+                # Try decimal first
+                int_values = [int(v) for v in values]
+                if all(0 <= val <= 255 for val in int_values):
+                    return int_values
+                else:
+                    raise ValueError("Invalid decimal value exceeds byte range") # Decimal value out of range
+            except ValueError:
+                pass # Not decimal or decimal out of range
+#
+            try:
+                # Try hex
+                hex_values = [v for v in values if all(c in '0123456789abcdefx' for c in v.lower())] # accept 'x' at end of hex values
+                if len(hex_values) == len(values): # all values can be hex
+                    hex_bytes = []
+                    for hex_val in hex_values:
+                        hex_val = hex_val.lower().replace('0x','') # remove 0x prefix if present
+                        if not all(c in '0123456789abcdef' for c in hex_val):
+                            raise ValueError # not hex after 0x removal
+
+                        byte_val = int(hex_val, 16)
+                        if 0 <= byte_val <= 255:
+                           hex_bytes.append(byte_val)
+                        else:
+                            raise ValueError("Invalid hex value exceeds byte range") # hex value out of byte range
+                    return hex_bytes
+            except ValueError:
+                pass # Not hex
+#
+    return None # Invalid NEC/NEC Extended code format
+
 # Streamlit App
 st.header("IRTuya : Tuya IR to NEC Converter")
-
+#
+# --------------------------------------------------------------------------------------------------
+#  Decode from Tuya
+# --------------------------------------------------------------------------------------------------
+#
 col_c1, col_c2 = st.columns([3, 1])	#  
 with col_c1:
     st.subheader("Decode Tuya IR")
@@ -307,9 +430,13 @@ if decode_button:
             st.error(f"Error during IR code decoding: {e}")
     else:
         st.warning("Please enter an IR code to decode.")
-
+#
 st.markdown("---")
-
+#
+# --------------------------------------------------------------------------------------------------
+#  Encode from Raw
+# --------------------------------------------------------------------------------------------------
+#
 col_c1, col_c2 = st.columns([3, 1])	#  
 with col_c1:
     st.subheader("Encode Tuya IR")
@@ -327,7 +454,7 @@ if encode_button:
             ir_signal_input_list = [int(x.strip()) for x in ir_signal_input_str.split(',')]
             encoded_code = encode_ir(ir_signal_input_list)
             st.write("Tuya IR Code encoded:")
-            st.code(encoded_code)
+            st.code(encoded_code, wrap_lines=True)
 
             if ir_signal_input_list:
                 df_signal = translated_values(ir_signal_input_list)
@@ -354,9 +481,80 @@ if encode_button:
 
     else:
         st.warning("Please enter an IR signal to encode.")
-
+#
 st.markdown("---")
 
+
+def encode_nec_to_raw(nec_bytes: list[int]) -> list[int]:
+    """
+    Encodes a NEC byte sequence into a raw IR signal (list of durations).
+    Uses standard NEC timing parameters.
+
+    Args:
+        nec_bytes: A list of integers representing the NEC command bytes.
+
+    Returns:
+        A list of integers representing the raw IR signal (microseconds).
+    """
+    preamble = [9000, 4500]
+    zero = [562, 563]
+    one = [562, 1688]
+    trailer = [562]
+    raw_signal = []
+
+    raw_signal.extend(preamble)
+
+    for byte in nec_bytes:
+        for i in range(8): # Process each bit of the byte
+            if (byte >> i) & 1: # Check if the i-th bit is a 1
+                raw_signal.extend(one)
+            else:
+                raw_signal.extend(zero)
+
+    raw_signal.extend(trailer)
+    return raw_signal
+
+
+#
+# --------------------------------------------------------------------------------------------------
+#  From NEC / LIRC to Tuya
+# --------------------------------------------------------------------------------------------------
+#
+col_c1, col_c2 = st.columns([3, 1])	#  
+with col_c1:
+    st.subheader("Encode NEC / LIRC for Tuya")
+    selected_example_code = st.selectbox("Accepted code examples:", options=example_nec_codes["Examples"], index=0)
+with col_c2:
+    st.image("remote03.png")
+
+user_code_input = st.text_input("Enter NEC sequence or NEC Extended sequence, *not* short code", value=selected_example_code, help="Enter NEC/NEC Extended code in hex, binary, or decimal format.")
+
+if st.button("Encode NEC for Tuya"):
+    parsed_code = parse_user_input(user_code_input)
+    if parsed_code:
+        hex_output = ", ".join(f"{byte:02X}" for byte in parsed_code)
+        st.success(f"Parsed Hex Code: :orange[{hex_output}]", icon="✅")
+
+        raw_signal = encode_nec_to_raw(parsed_code)
+        raw_signal_str = ", ".join(map(str, raw_signal))
+        st.code(raw_signal_str, wrap_lines=True)
+
+        # ir_signal_input_list = [int(x.strip()) for x in ir_signal_input_str.split(',')]
+        # encoded_code = encode_ir(ir_signal_input_list)
+        encoded_code = encode_ir(raw_signal)
+        st.write("Tuya IR Code encoded:")
+        st.code(encoded_code, wrap_lines=True)
+
+
+    else:
+        st.error("Invalid input. Please enter a valid NEC code.")
+#
+st.markdown("---")
+#
+# --------------------------------------------------------------------------------------------------
+#  Footer
+# --------------------------------------------------------------------------------------------------
+#
 credits1="[mildsunrise](https://gist.github.com/mildsunrise/1d576669b63a260d2cff35fda63ec0b5)"
 credits2="""<div style="text-align: center;">
 <a href="https://pasthev.github.io/" target="_blank"><i>pasthev 2025</i></a>
